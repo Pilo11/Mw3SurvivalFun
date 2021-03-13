@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "FunExecuter": {
+      "commandName": "Project",
+      "commandLineArgs": "s"
+    }
+  }
+}
