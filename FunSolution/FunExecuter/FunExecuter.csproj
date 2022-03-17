@@ -8,7 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\AsmJitter\AsmJitter.csproj" />
+    <PackageReference Include="AsmJitter" Version="1.0.0" />
   </ItemGroup>
 
 </Project>
