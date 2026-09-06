@@ -1,13 +1,4 @@
-﻿using AsmJitter.Model;
-using AsmJitter.Model.Instruction;
-using AsmJitter.Model.Operand;
-using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Linq;
-using System.Runtime.InteropServices;
-using System.Text;
-using static AsmJitter.AsmInterface;
+﻿using System;
 
 namespace FunExecuter
 {
@@ -17,7 +8,7 @@ namespace FunExecuter
         {
             try
             {
-                GameManager.Init();
+                GscIwdMode.Run(args);
             }
             catch (Exception ex)
             {
@@ -25,9 +16,8 @@ namespace FunExecuter
                 Console.WriteLine(Environment.NewLine + Environment.NewLine);
                 Console.WriteLine(ex);
             }
-            
+
             Console.ReadLine();
         }
-        
     }
 }
