@@ -5,6 +5,9 @@
     <TargetFramework>net6.0-windows</TargetFramework>
     <Platforms>x86</Platforms>
     <LangVersion>default</LangVersion>
+    <!-- GSC and tool zips live in the assembly, not as loose publish files. -->
+    <IncludeAllContentForSelfExtract>false</IncludeAllContentForSelfExtract>
+    <DefineConstants Condition="'$(PublishSingleFile)' == 'true'">$(DefineConstants);SINGLE_FILE_PUBLISH</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
@@ -12,8 +15,27 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="Gsc\**\*.gsc" />
-    <EmbeddedResource Include="Tools\*.zip" />
+    <None Remove="Gsc\**" />
+    <Content Remove="Gsc\**" />
+    <EmbeddedResource Include="Gsc\**\*.gsc">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Never</CopyToPublishDirectory>
+    </EmbeddedResource>
+
+    <None Remove="Tools\*.zip" />
+    <Content Remove="Tools\*.zip" />
+    <EmbeddedResource Include="Tools\*.zip">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Never</CopyToPublishDirectory>
+    </EmbeddedResource>
   </ItemGroup>
+
+  <Target Name="EnsureGscEmbedded" BeforeTargets="BeforeCompile">
+    <ItemGroup>
+      <_EmbeddedGsc Include="Gsc\**\*.gsc" />
+    </ItemGroup>
+    <Error Condition="'@(_EmbeddedGsc)' == ''" Text="No GSC files found under Gsc\**\*.gsc. They must be EmbeddedResource so single-file publish ships them inside FunExecuter.exe." />
+    <Message Importance="high" Text="Embedding GSC into FunExecuter.exe: @(_EmbeddedGsc)" />
+  </Target>
 
 </Project>

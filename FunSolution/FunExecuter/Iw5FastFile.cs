@@ -24,6 +24,7 @@ namespace FunExecuter
     internal sealed class Iw5FastFile
     {
         private const int MaxScriptZlibBytes = 512 * 1024;
+        internal const int ScriptBlockIndex = 8;
 
         internal byte[] Prefix;
         internal byte[] Payload;
@@ -83,21 +84,18 @@ namespace FunExecuter
 
                 if (TryReadSlot(payload, i, zlibLen, stack, out var slot))
                 {
-                    var label = string.IsNullOrEmpty(slot.Name) ? ("@" + slot.BufferOffset) : slot.Name;
-                    Console.WriteLine(
-                        "ScriptFile " + label + ": stack " + slot.Stack.Length +
-                        ", zlib " + slot.BufferLength + ", bytecode " + slot.BytecodeLength +
-                        (StackContains(slot.Stack, "wave_started") ? ", has wave_started" : ""));
+                    LogFoundSlot(slot);
                     slots.Add(slot);
                     i += Math.Max(slot.BufferLength, 2);
                     continue;
                 }
 
-                if (StackContains(stack, "wave_started"))
+                if (IsInterestingStack(stack))
                 {
                     Console.WriteLine(
-                        "Found wave_started stack at offset " + i + " (" + stack.Length +
-                        " bytes, zlib " + zlibLen + ") without a matching ScriptFile header.");
+                        "Found GSC stack at offset " + i + " (" + stack.Length +
+                        " bytes, zlib " + zlibLen + ") without a matching ScriptFile header." +
+                        StackMarkerSuffix(stack));
                     LogIntsBefore(payload, i, 64);
                 }
 
@@ -131,7 +129,7 @@ namespace FunExecuter
             if (extra > 0)
             {
                 InsertBytes(originalEnd, extra);
-                GrowScriptBlock(extra);
+                GrowBlock(ScriptBlockIndex, extra);
                 Console.WriteLine("Inserted " + extra + " bytes into the FastFile stream after " + SlotLabel(slot) + " and grew XFILE_BLOCK_SCRIPT.");
             }
 
@@ -143,27 +141,33 @@ namespace FunExecuter
             return true;
         }
 
-        private void InsertBytes(int index, int count)
+        internal void InsertBytes(int index, int count)
         {
+            if (count <= 0)
+                return;
             var grown = new byte[Payload.Length + count];
             Buffer.BlockCopy(Payload, 0, grown, 0, index);
             Buffer.BlockCopy(Payload, index, grown, index + count, Payload.Length - index);
             Payload = grown;
         }
 
-        private void GrowScriptBlock(int extra)
+        internal void GrowBlock(int blockIndex, int extra)
         {
-            const int scriptBlockIndex = 8;
+            if (extra <= 0)
+                return;
+
             var size = BitConverter.ToUInt32(Payload, 0);
             BitConverter.GetBytes(size + (uint)extra).CopyTo(Payload, 0);
 
-            var scriptSizeOffset = 8 + scriptBlockIndex * 4;
-            if (scriptSizeOffset + 4 > Payload.Length)
+            var blockSizeOffset = 8 + blockIndex * 4;
+            if (blockSizeOffset + 4 > Payload.Length)
                 return;
 
-            var scriptSize = BitConverter.ToUInt32(Payload, scriptSizeOffset);
-            BitConverter.GetBytes(scriptSize + (uint)extra).CopyTo(Payload, scriptSizeOffset);
-            Console.WriteLine("XFile.size " + size + " -> " + (size + extra) + ", blockSize[SCRIPT] " + scriptSize + " -> " + (scriptSize + extra) + ".");
+            var blockSize = BitConverter.ToUInt32(Payload, blockSizeOffset);
+            BitConverter.GetBytes(blockSize + (uint)extra).CopyTo(Payload, blockSizeOffset);
+            Console.WriteLine(
+                "XFile.size " + size + " -> " + (size + extra) +
+                ", blockSize[" + blockIndex + "] " + blockSize + " -> " + (blockSize + extra) + ".");
         }
 
         private static string SlotLabel(Iw5ScriptSlot slot)
@@ -176,6 +180,41 @@ namespace FunExecuter
             if (offset < 0)
                 return;
             BitConverter.GetBytes(value).CopyTo(Payload, offset);
+        }
+
+        internal int ReplaceExactCString(string from, string to)
+        {
+            if (string.IsNullOrEmpty(from) || to.Length > from.Length)
+                return 0;
+
+            var needle = Encoding.ASCII.GetBytes(from);
+            var replacement = Encoding.ASCII.GetBytes(to);
+            var count = 0;
+            var payload = Payload;
+            var i = 0;
+            while (i + needle.Length < payload.Length)
+            {
+                var at = payload.AsSpan(i).IndexOf(needle);
+                if (at < 0)
+                    break;
+
+                var abs = i + at;
+                var beforeOk = abs == 0 || payload[abs - 1] == 0;
+                var after = abs + needle.Length;
+                var afterOk = after < payload.Length && payload[after] == 0;
+                if (beforeOk && afterOk)
+                {
+                    Array.Clear(payload, abs, needle.Length);
+                    Buffer.BlockCopy(replacement, 0, payload, abs, replacement.Length);
+                    count++;
+                    i = after + 1;
+                    continue;
+                }
+
+                i = abs + 1;
+            }
+
+            return count;
         }
 
         private static Iw5FastFile LoadUnsigned(byte[] file)
@@ -197,13 +236,23 @@ namespace FunExecuter
         private static bool TryReadSlot(byte[] payload, int bufferOffset, int zlibLen, byte[] stack, out Iw5ScriptSlot slot)
         {
             slot = null;
-            var stackLen = stack.Length;
-            var nearby = Math.Min(bufferOffset, 4096);
-            if (TryReadSlotInRange(payload, bufferOffset - nearby, bufferOffset, bufferOffset, zlibLen, stack, out slot))
+            var nearby = 8192;
+            var beforeStart = Math.Max(0, bufferOffset - nearby);
+            if (TryReadSlotInRange(payload, beforeStart, bufferOffset, bufferOffset, zlibLen, stack, out slot))
                 return true;
 
-            if (bufferOffset > nearby
-                && TryReadSlotInRange(payload, 0, bufferOffset - nearby, bufferOffset, zlibLen, stack, out slot))
+            var afterStart = bufferOffset + zlibLen;
+            var afterEnd = Math.Min(payload.Length, afterStart + nearby);
+            if (afterStart < payload.Length
+                && TryReadSlotInRange(payload, afterStart, afterEnd, bufferOffset, zlibLen, stack, out slot))
+                return true;
+
+            if (beforeStart > 0
+                && TryReadSlotInRange(payload, 0, beforeStart, bufferOffset, zlibLen, stack, out slot))
+                return true;
+
+            if (afterEnd < payload.Length
+                && TryReadSlotInRange(payload, afterEnd, payload.Length, bufferOffset, zlibLen, stack, out slot))
                 return true;
 
             return false;
@@ -226,9 +275,12 @@ namespace FunExecuter
                 if (!TryParseLengthTriple(payload, field, stackLen, zlibLen, out var compressedLen, out var bytecodeLen, out var compressedLenField, out var lenFieldOffset, out var bytecodeLenField))
                     continue;
 
+                if (bufferOffset + compressedLen > payload.Length)
+                    continue;
+
                 foreach (var bytecodeOffset in BytecodeCandidates(bufferOffset, compressedLen))
                 {
-                    if (bytecodeOffset + bytecodeLen > payload.Length)
+                    if (bytecodeOffset < 0 || bytecodeOffset + bytecodeLen > payload.Length)
                         continue;
 
                     slot = new Iw5ScriptSlot
@@ -306,16 +358,48 @@ namespace FunExecuter
                 return false;
             if (compressedLen < 8 || compressedLen > MaxScriptZlibBytes)
                 return false;
-            return compressedLen == zlibLen || (compressedLen >= zlibLen && compressedLen - zlibLen <= 32);
+            return compressedLen >= zlibLen - 16 && compressedLen <= zlibLen + 4096;
         }
 
         private static IEnumerable<int> BytecodeCandidates(int bufferOffset, int compressedLen)
         {
             var raw = bufferOffset + compressedLen;
             yield return raw;
-            var aligned = (raw + 3) & ~3;
-            if (aligned != raw)
-                yield return aligned;
+            foreach (var align in new[] { 4, 8, 16, 32, 64, 128 })
+            {
+                var aligned = (raw + (align - 1)) & ~(align - 1);
+                if (aligned != raw)
+                    yield return aligned;
+            }
+        }
+
+        private static void LogFoundSlot(Iw5ScriptSlot slot)
+        {
+            var label = string.IsNullOrEmpty(slot.Name) ? ("@" + slot.BufferOffset) : slot.Name;
+            Console.WriteLine(
+                "ScriptFile " + label + ": stack " + slot.Stack.Length +
+                ", zlib " + slot.BufferLength + ", bytecode " + slot.BytecodeLength +
+                StackMarkerSuffix(slot.Stack));
+        }
+
+        private static bool IsInterestingStack(byte[] stack)
+        {
+            return StackContains(stack, "wave_started")
+                || StackContains(stack, "survival_armories")
+                || StackContains(stack, "survival_armory")
+                || StackContains(stack, "specops_ui_weaponstore");
+        }
+
+        private static string StackMarkerSuffix(byte[] stack)
+        {
+            var parts = new List<string>();
+            if (StackContains(stack, "wave_started"))
+                parts.Add("wave_started");
+            if (StackContains(stack, "survival_armories"))
+                parts.Add("survival_armories");
+            if (StackContains(stack, "survival_armory"))
+                parts.Add("survival_armory");
+            return parts.Count == 0 ? "" : ", has " + string.Join(" ", parts);
         }
 
         private static string ReadNearbyName(byte[] payload, int field, int bufferOffset)

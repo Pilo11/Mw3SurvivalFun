@@ -1,19 +1,6 @@
 // FunExecuter survival test script.
-// Loaded automatically on IW5-Mod when Survival starts (scripts/sp/survival).
-
-init()
-{
-    if ( isdefined( level.fun_hiho_christmas ) )
-        return;
-
-    level.fun_hiho_christmas = 1;
-    thread fun_hiho_christmas();
-}
-
-main()
-{
-    init();
-}
+// Injected into a Survival ScriptFile in patch_survival.ff.
+// Do not define init()/main() here — host scripts such as 1571 already use those names.
 
 fun_hiho_christmas()
 {
@@ -26,7 +13,6 @@ fun_hiho_christmas()
         if ( isdefined( wave ) && wave != 1 )
             continue;
 
-        wait 10;
         iprintlnbold( "HIHO christmas!" );
         return;
     }

@@ -16,6 +16,8 @@ namespace FunExecuter
             if (!File.Exists(exePath))
                 throw new FileNotFoundException("Could not find " + Constants.GAME_EXE_NAME + " in " + gamePath);
 
+            LogEmbeddedGscResources();
+
             var entries = LoadGscEntries();
             if (entries.Count == 0)
                 throw new InvalidOperationException("No .gsc files found (embedded or Gsc folder).");
@@ -63,7 +65,9 @@ namespace FunExecuter
                 UseShellExecute = true
             };
             Process.Start(start);
-            Console.WriteLine("FunExecuter patched patch_survival.ff. Start Survival; after wave 1 begins, wait 10 seconds for: HIHO christmas!");
+            Console.WriteLine("FunExecuter injected GSC into patch_survival.ff.");
+            Console.WriteLine("Intermission between waves is 60 seconds (skip still starts the next wave immediately).");
+            Console.WriteLine("Start Survival; when wave 1 begins you should see: HIHO christmas!");
         }
 
         private static string ResolveGamePath(string[] args)
@@ -79,6 +83,15 @@ namespace FunExecuter
 
         private static List<IwdEntry> LoadGscEntries()
         {
+            if (IsSingleFilePublish())
+            {
+                var embeddedOnly = LoadGscFromEmbeddedResources();
+                if (embeddedOnly.Count == 0)
+                    throw new InvalidOperationException("Single-file FunExecuter.exe has no embedded .gsc resources.");
+                Console.WriteLine("GSC source: embedded in FunExecuter.exe (single-file)");
+                return embeddedOnly;
+            }
+
             var fromDisk = TryLoadGscFromDisk();
             if (fromDisk.Count > 0)
             {
@@ -90,6 +103,26 @@ namespace FunExecuter
             if (embedded.Count > 0)
                 Console.WriteLine("GSC source: embedded in FunExecuter.exe");
             return embedded;
+        }
+
+        private static bool IsSingleFilePublish()
+        {
+#if SINGLE_FILE_PUBLISH
+            return true;
+#else
+            return false;
+#endif
+        }
+
+        private static void LogEmbeddedGscResources()
+        {
+            var names = Assembly.GetExecutingAssembly().GetManifestResourceNames()
+                .Where(n => n.EndsWith(".gsc", StringComparison.OrdinalIgnoreCase))
+                .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            Console.WriteLine("Embedded GSC resources: " + names.Length);
+            foreach (var name in names)
+                Console.WriteLine("  " + name);
         }
 
         private static List<IwdEntry> TryLoadGscFromDisk()

@@ -4,15 +4,37 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Reflection;
 using System.Text.RegularExpressions;
 
 namespace FunExecuter
 {
     internal static class SurvivalFastFilePatcher
     {
-        private const string InjectMarker = "fun_hiho";
+        private const string HihoMarker = "fun_hiho_christmas";
+        private const string G18Marker = "fun_g18_akimbo";
+        private const string IntermissionMarker = "fun_intermission_seconds";
         private static readonly Regex WaveStartedNotify = new Regex(
             @"level\s+notify\s*\(\s*""wave_started""",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex WeaponTableLoad = new Regex(
+            @"\w+\s*\(\s*0\s*,\s*64\s*,\s*""weapon""\s*\)\s*;",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex ArmoryIndexLookup = new Regex(
+            @"return\s+tablelookup\s*\(\s*""sp/survival_armories\.csv""\s*,\s*0\s*,\s*(\w+)\s*,\s*1\s*\)\s*;",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        // 1571 preload calls the armory ScriptFile (1557) as a far call during precache.
+        private static readonly Regex ArmoryInitCall = new Regex(
+            @"::\s*_id_3EBB\s*\(\s*\)\s*;",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex ArmoryPrecacheMenu = new Regex(
+            @"precachemenu\s*\(\s*""survival_armory_weapon""",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex SurvivalAllReadyTimeout = new Regex(
+            @"waittill_any_timeout\s*\(\s*([^,\r\n]+?)\s*,\s*""survival_all_ready""\s*\)",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex SpecialOpsReadyHud = new Regex(
+            @"(_id_132D\s*=\s*)30(\s*;)",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         internal static void PatchAndInstall(string gamePath, string toolsDir)
@@ -83,10 +105,22 @@ namespace FunExecuter
             if (slots.Count == 0)
                 throw new InvalidOperationException("No ScriptFile buffers were found after inflating patch_survival.ff.");
 
-            var patchedAny = false;
+            var hihoSource = LoadGscSource("hiho_christmas.gsc");
+            var g18Source = LoadGscSource("g18_akimbo.gsc");
+            var intermissionSource = LoadGscSource("intermission.gsc");
+            var patchedHiho = false;
+            var patchedG18 = false;
+            var patchedIntermission = false;
+            var replacements = new List<(Iw5ScriptSlot Slot, byte[] Compressed, int StackLen, byte[] Bytecode, bool Hiho, bool G18, bool Intermission)>();
+
             foreach (var slot in slots)
             {
-                if (!Iw5FastFile.StackContains(slot.Stack, "wave_started"))
+                var wantHiho = Iw5FastFile.StackContains(slot.Stack, "wave_started");
+                var wantG18 = Iw5FastFile.StackContains(slot.Stack, "survival_armories")
+                    || Iw5FastFile.StackContains(slot.Stack, "survival_armory_weapon")
+                    || Iw5FastFile.StackContains(slot.Stack, "specops_ui_weaponstore");
+                var wantIntermission = Iw5FastFile.StackContains(slot.Stack, "survival_all_ready");
+                if (!wantHiho && !wantG18 && !wantIntermission)
                     continue;
 
                 var label = string.IsNullOrEmpty(slot.Name) ? ("script@" + slot.BufferOffset) : slot.Name;
@@ -102,38 +136,104 @@ namespace FunExecuter
                 }
 
                 var source = File.ReadAllText(decompiled, Encoding.UTF8);
-                if (!WaveStartedNotify.IsMatch(source))
+                var patched = source;
+
+                if (wantHiho && WaveStartedNotify.IsMatch(source))
                 {
-                    Console.WriteLine("Skipping " + label + " (stack has wave_started but decompiled source has no notify).");
-                    continue;
+                    var hooked = InjectGscAfterWaveStarted(patched, hihoSource);
+                    if (hooked == patched)
+                        Console.WriteLine("Already hooked wave_started in: " + label);
+                    else
+                    {
+                        Console.WriteLine("Injected hiho_christmas.gsc into: " + label);
+                        patched = hooked;
+                        patchedHiho = true;
+                    }
                 }
 
-                var patched = InjectHihoHook(source);
+                if (!wantG18 && LooksLikeArmoryTarget(patched))
+                    wantG18 = true;
+
+                if (wantG18)
+                {
+                    var hooked = InjectG18Akimbo(patched, g18Source);
+                    if (hooked.Contains(G18Marker, StringComparison.Ordinal) && patched.Contains(G18Marker, StringComparison.Ordinal))
+                        Console.WriteLine("Already hooked G18 Akimbo in: " + label);
+                    else if (!hooked.Contains(G18Marker, StringComparison.Ordinal))
+                        Console.WriteLine("Could not find a G18 Akimbo hook site in: " + label);
+                    else
+                    {
+                        Console.WriteLine("Injected g18_akimbo.gsc into: " + label);
+                        patched = hooked;
+                        patchedG18 = true;
+                    }
+                }
+
+                if (!wantIntermission && SurvivalAllReadyTimeout.IsMatch(patched))
+                    wantIntermission = true;
+
+                if (wantIntermission)
+                {
+                    var hadMarker = patched.Contains(IntermissionMarker, StringComparison.Ordinal);
+                    var hooked = InjectIntermission(patched, intermissionSource);
+                    if (!hooked.Contains(IntermissionMarker, StringComparison.Ordinal))
+                        Console.WriteLine("Could not find Survival intermission wait in: " + label);
+                    else if (hadMarker)
+                        Console.WriteLine("Already hooked 60s intermission in: " + label);
+                    else
+                    {
+                        Console.WriteLine("Injected intermission.gsc into: " + label);
+                        patched = hooked;
+                        patchedIntermission = true;
+                    }
+                }
+
                 if (patched == source)
-                    Console.WriteLine("Already hooked: " + label);
-                else
-                {
-                    File.WriteAllText(decompiled, patched, new UTF8Encoding(false));
-                    Console.WriteLine("Hooked wave_started in: " + label);
-                }
+                    continue;
 
+                File.WriteAllText(decompiled, patched, new UTF8Encoding(false));
                 var compiledBin = CompileGsc(gscTool, dumpDir, decompiled);
                 GscBinFile.Read(compiledBin, out var compressed, out var stackLen, out var bytecode);
                 Console.WriteLine(
                     "Compiled " + label + ": stack " + compressed.Length + "/" + slot.BufferLength +
                     " compressed, bytecode " + bytecode.Length + "/" + slot.BytecodeLength + ".");
-                if (!fastFile.TryReplaceScript(slot, compressed, stackLen, bytecode, slots))
+                var injectedHiho = patched.Contains("fun_hiho_christmas", StringComparison.Ordinal);
+                var injectedG18 = patched.Contains("fun_g18_akimbo", StringComparison.Ordinal);
+                var injectedIntermission = patched.Contains(IntermissionMarker, StringComparison.Ordinal);
+                replacements.Add((slot, compressed, stackLen, bytecode, injectedHiho, injectedG18, injectedIntermission));
+            }
+
+            patchedHiho = false;
+            patchedG18 = false;
+            patchedIntermission = false;
+            foreach (var replacement in replacements.OrderByDescending(r => r.Slot.BufferOffset))
+            {
+                if (!fastFile.TryReplaceScript(replacement.Slot, replacement.Compressed, replacement.StackLen, replacement.Bytecode, slots))
                 {
-                    Console.WriteLine("Skipping " + label + " (compiled script does not fit the FastFile slot).");
+                    Console.WriteLine("Skipping script@" + replacement.Slot.BufferOffset + " (compiled script does not fit the FastFile slot).");
                     continue;
                 }
 
-                patchedAny = true;
-                break;
+                if (replacement.Hiho)
+                    patchedHiho = true;
+                if (replacement.G18)
+                    patchedG18 = true;
+                if (replacement.Intermission)
+                    patchedIntermission = true;
             }
 
-            if (!patchedAny)
+            if (!patchedHiho)
                 throw new InvalidOperationException("No Survival ScriptFile containing wave_started could be decompiled and patched.");
+            if (!patchedG18)
+                throw new InvalidOperationException("No Survival armory ScriptFile could be decompiled and patched with g18_akimbo.gsc.");
+            if (!patchedIntermission)
+                throw new InvalidOperationException("No Survival ScriptFile containing survival_all_ready could be patched with 60s intermission.");
+
+            var renamed = fastFile.ReplaceExactCString("WEAPON_GLOCK", "PUFF PUFF");
+            Console.WriteLine(
+                renamed > 0
+                    ? "Armory menu name WEAPON_GLOCK -> PUFF PUFF (" + renamed + " string(s))."
+                    : "WEAPON_GLOCK was not in the FastFile string pool; G18 slot still gives akimbo via GSC.");
 
             var built = Path.Combine(outDir, "patch_survival.ff");
             fastFile.Save(built);
@@ -214,31 +314,216 @@ namespace FunExecuter
             return Directory.EnumerateFiles(root, fileName, SearchOption.AllDirectories).FirstOrDefault();
         }
 
-        internal static string InjectHihoHook(string source)
+        private static string InjectGscAfterWaveStarted(string source, string gscFile)
         {
-            if (source.Contains(InjectMarker, StringComparison.Ordinal))
+            if (source.Contains(HihoMarker, StringComparison.Ordinal))
                 return source;
 
             var match = WaveStartedNotify.Match(source);
             if (!match.Success)
                 return source;
 
-            var semicolon = source.IndexOf(';', match.Index);
-            if (semicolon < 0)
+            var bodyStart = source.LastIndexOf('{', match.Index);
+            if (bodyStart < 0)
                 return source;
 
-            var call = Environment.NewLine + "\tthread fun_hiho();" + Environment.NewLine;
-            source = source.Insert(semicolon + 1, call);
-            source += @"
-
-fun_hiho()
-{
-	wait 10;
-	iprintlnbold( ""HIHO christmas!"" );
-}
-";
-            return source;
+            source = source.Insert(bodyStart + 1, Environment.NewLine + "\tthread fun_hiho_christmas();" + Environment.NewLine);
+            return AppendGsc(source, gscFile);
         }
+
+        private static string InjectIntermission(string source, string gscFile)
+        {
+            if (source.Contains(IntermissionMarker, StringComparison.Ordinal))
+                return source;
+
+            var timeout = SurvivalAllReadyTimeout.Match(source);
+            if (!timeout.Success)
+                return source;
+
+            var timeoutArg = timeout.Groups[1].Value.Trim();
+            var searchStart = Math.Max(0, timeout.Index - 800);
+            var window = source.Substring(searchStart, timeout.Index - searchStart);
+            var durationVar = Regex.IsMatch(timeoutArg, @"^\w+$") ? timeoutArg : null;
+            var assign = durationVar == null
+                ? Match.Empty
+                : Regex.Match(
+                    window,
+                    @"\b" + Regex.Escape(durationVar) + @"\s*=\s*\d+\s*;",
+                    RegexOptions.RightToLeft);
+
+            if (assign.Success)
+            {
+                var absIndex = searchStart + assign.Index;
+                source = source.Remove(absIndex, assign.Length)
+                    .Insert(absIndex, durationVar + " = fun_intermission_seconds();");
+            }
+            else
+            {
+                source = source.Remove(timeout.Index, timeout.Length)
+                    .Insert(timeout.Index, "waittill_any_timeout( fun_intermission_seconds(), \"survival_all_ready\" )");
+            }
+
+            source = SpecialOpsReadyHud.Replace(source, "$1fun_intermission_seconds()$2");
+            source = Regex.Replace(
+                source,
+                @"max\s*\(\s*(\w+)\s*,\s*30\s*\)(?=[\s\S]{0,160}?_id_132D)",
+                "max( $1, fun_intermission_seconds() )",
+                RegexOptions.IgnoreCase);
+
+            return AppendGsc(source, gscFile);
+        }
+
+        private static bool LooksLikeArmoryTarget(string source)
+        {
+            return WeaponTableLoad.IsMatch(source)
+                || ArmoryInitCall.IsMatch(source)
+                || ArmoryPrecacheMenu.IsMatch(source);
+        }
+
+        private static string InjectG18Akimbo(string source, string gscFile)
+        {
+            if (source.Contains(G18Marker, StringComparison.Ordinal))
+                return source;
+
+            var tableLoad = WeaponTableLoad.Match(source);
+            if (tableLoad.Success)
+            {
+                source = source.Insert(tableLoad.Index + tableLoad.Length, Environment.NewLine + "\tfun_g18_akimbo_register();");
+
+                var lookup = ArmoryIndexLookup.Match(source);
+                if (lookup.Success)
+                {
+                    var indexVar = lookup.Groups[1].Value;
+                    var wrap =
+                        "var_fun_g18 = fun_g18_akimbo_item_name( " + indexVar + " );" + Environment.NewLine +
+                        "\tif ( var_fun_g18 != \"\" )" + Environment.NewLine +
+                        "\t\treturn var_fun_g18;" + Environment.NewLine + "\t";
+                    source = source.Insert(lookup.Index, wrap);
+                }
+
+                return AppendGsc(source, gscFile);
+            }
+
+            // ScriptFile 1557 is often missing from the zlib scan. 1571 still calls
+            // _id_3EBB() during preload; register G18 immediately after that returns.
+            var armoryInit = ArmoryInitCall.Match(source);
+            if (!armoryInit.Success)
+                return source;
+
+            source = source.Insert(
+                armoryInit.Index + armoryInit.Length,
+                Environment.NewLine + "\tfun_g18_akimbo_register();");
+            return AppendGsc(source, gscFile);
+        }
+
+        private static readonly Regex EntryPointFunction = new Regex(
+            @"(^|\n)(init|main)\s*\(\s*\)\s*\{",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        private static string AppendGsc(string source, string gscFile)
+        {
+            gscFile = StripEntryPointFunctions(gscFile);
+            if (string.IsNullOrWhiteSpace(gscFile))
+                return source;
+
+            if (!source.EndsWith("\n", StringComparison.Ordinal))
+                source += Environment.NewLine;
+
+            return source + Environment.NewLine + gscFile + Environment.NewLine;
+        }
+
+        private static string StripEntryPointFunctions(string gscFile)
+        {
+            var source = gscFile;
+            Match match;
+            while ((match = EntryPointFunction.Match(source)).Success)
+            {
+                var brace = source.IndexOf('{', match.Index);
+                var end = FindMatchingBrace(source, brace);
+                if (brace < 0 || end < 0)
+                    break;
+
+                var start = match.Index + (match.Groups[1].Length > 0 ? match.Groups[1].Length : 0);
+                source = source.Remove(start, end - start + 1);
+            }
+
+            return source.Trim();
+        }
+
+        private static int FindMatchingBrace(string source, int openBrace)
+        {
+            if (openBrace < 0 || openBrace >= source.Length || source[openBrace] != '{')
+                return -1;
+
+            var depth = 0;
+            for (var i = openBrace; i < source.Length; i++)
+            {
+                var c = source[i];
+                if (c == '{')
+                    depth++;
+                else if (c == '}')
+                {
+                    depth--;
+                    if (depth == 0)
+                        return i;
+                }
+            }
+
+            return -1;
+        }
+
+        private static string LoadGscSource(string fileName)
+        {
+#if !SINGLE_FILE_PUBLISH
+            var fromDisk = TryLoadGscFromDisk(fileName);
+            if (fromDisk != null)
+                return fromDisk;
+#endif
+            Console.WriteLine("Loading GSC from embedded resource: " + fileName);
+
+            var assembly = Assembly.GetExecutingAssembly();
+            foreach (var name in assembly.GetManifestResourceNames())
+            {
+                if (!name.EndsWith(fileName, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                using var stream = assembly.GetManifestResourceStream(name);
+                if (stream == null)
+                    continue;
+
+                using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+                var text = reader.ReadToEnd().Trim();
+                if (text.Length > 0)
+                    return text;
+            }
+
+            throw new FileNotFoundException("Could not load GSC source: " + fileName);
+        }
+
+#if !SINGLE_FILE_PUBLISH
+        private static string TryLoadGscFromDisk(string fileName)
+        {
+            var roots = new[]
+            {
+                Path.Combine(AppContext.BaseDirectory, "Gsc"),
+                Path.Combine(Directory.GetCurrentDirectory(), "Gsc"),
+                Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "Gsc")
+            };
+
+            foreach (var root in roots)
+            {
+                var fullRoot = Path.GetFullPath(root);
+                if (!Directory.Exists(fullRoot))
+                    continue;
+
+                var match = Directory.EnumerateFiles(fullRoot, fileName, SearchOption.AllDirectories).FirstOrDefault();
+                if (match != null)
+                    return File.ReadAllText(match, Encoding.UTF8).Trim();
+            }
+
+            return null;
+        }
+#endif
 
         private static void RunTool(string fileName, string workingDirectory, params string[] arguments)
         {
