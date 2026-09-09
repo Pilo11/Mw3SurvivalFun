@@ -69,7 +69,9 @@ namespace FunExecuter
                 Console.WriteLine("Launched PID " + launched.Id);
             Console.WriteLine("FunExecuter injected GSC into patch_survival.ff.");
             Console.WriteLine("Intermission between waves is 60 seconds (skip still starts the next wave immediately).");
-            Console.WriteLine("Placed sentry guns keep their health (no longer patched in memory).");
+            Console.WriteLine("Sentry minigun costs $500 (menu and purchase), keeps its health, and up to 4 can be owned (2 per player in co-op).");
+            Console.WriteLine("Body armor soaks 1000 damage and can be bought again while remaining armor is still above 250.");
+            Console.WriteLine("Each player can buy up to 4 riot shield squads.");
             Console.WriteLine("Start Survival; when wave 1 begins you should see: HIHO christmas!");
         }
 

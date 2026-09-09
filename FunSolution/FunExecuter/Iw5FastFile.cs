@@ -55,6 +55,96 @@ namespace FunExecuter
             output.Write(compressed, 0, compressed.Length);
         }
 
+        internal int ReplaceSentryEquipmentPrice(int oldPrice, int newPrice)
+        {
+            var oldText = oldPrice.ToString();
+            var newText = PadPrice(newPrice, oldText.Length);
+            var packed = Encoding.ASCII.GetBytes("sentry\0equipment\0" + oldText);
+            var packedNext = Encoding.ASCII.GetBytes("sentry\0equipment\0" + newText);
+            var csv = Encoding.ASCII.GetBytes("sentry,equipment," + oldText);
+            var csvNext = Encoding.ASCII.GetBytes("sentry,equipment," + newText);
+            var hits = ReplaceBytes(packed, packedNext) + ReplaceBytes(csv, csvNext);
+            if (hits == 0)
+            {
+                hits += ReplacePriceNearToken("sentry", oldText, newText);
+                hits += ReplacePriceNearToken("Sentry Gun", oldText, newText);
+            }
+            return hits;
+        }
+
+        private int ReplacePriceNearToken(string token, string oldPrice, string newPrice)
+        {
+            var sentry = Encoding.ASCII.GetBytes(token);
+            var price = Encoding.ASCII.GetBytes(oldPrice);
+            var next = Encoding.ASCII.GetBytes(newPrice);
+            var count = 0;
+            var start = 0;
+            while (true)
+            {
+                var index = Payload.AsSpan(start).IndexOf(sentry);
+                if (index < 0)
+                    break;
+
+                var abs = start + index;
+                var after = abs + sentry.Length;
+                if (after < Payload.Length)
+                {
+                    var c = Payload[after];
+                    if (c == '_' || c == 'g' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))
+                    {
+                        start = abs + sentry.Length;
+                        continue;
+                    }
+                }
+
+                var windowStart = abs;
+                var windowEnd = Math.Min(Payload.Length, abs + 96);
+                var found = Payload.AsSpan(windowStart, windowEnd - windowStart).IndexOf(price);
+                if (found >= 0)
+                {
+                    var priceAbs = windowStart + found;
+                    Buffer.BlockCopy(next, 0, Payload, priceAbs, next.Length);
+                    count++;
+                    start = priceAbs + price.Length;
+                    continue;
+                }
+
+                start = abs + sentry.Length;
+            }
+
+            return count;
+        }
+
+        private static string PadPrice(int price, int width)
+        {
+            var text = price.ToString();
+            if (text.Length > width)
+                throw new ArgumentException("Price " + price + " does not fit in " + width + " characters.");
+            return text.PadRight(width);
+        }
+
+        private int ReplaceBytes(byte[] find, byte[] replace)
+        {
+            if (find.Length != replace.Length)
+                throw new ArgumentException("Byte replacements must keep the same length.");
+
+            var count = 0;
+            var start = 0;
+            while (true)
+            {
+                var index = Payload.AsSpan(start).IndexOf(find);
+                if (index < 0)
+                    break;
+
+                var abs = start + index;
+                Buffer.BlockCopy(replace, 0, Payload, abs, replace.Length);
+                count++;
+                start = abs + find.Length;
+            }
+
+            return count;
+        }
+
         internal List<Iw5ScriptSlot> FindScriptSlots()
         {
             var slots = new List<Iw5ScriptSlot>();
@@ -364,6 +454,10 @@ namespace FunExecuter
                 parts.Add("survival_armories");
             if (StackContains(stack, "survival_armory"))
                 parts.Add("survival_armory");
+            if (StackContains(stack, "sentry_gl"))
+                parts.Add("sentry_gl");
+            if (StackContains(stack, "specops_ui_weaponstore"))
+                parts.Add("weaponstore");
             return parts.Count == 0 ? "" : ", has " + string.Join(" ", parts);
         }
 
