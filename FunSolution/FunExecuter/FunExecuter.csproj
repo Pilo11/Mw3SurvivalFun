@@ -4,15 +4,12 @@
     <OutputType>Exe</OutputType>
     <TargetFramework>net6.0-windows</TargetFramework>
     <Platforms>x86</Platforms>
+    <PlatformTarget>x86</PlatformTarget>
     <LangVersion>default</LangVersion>
     <!-- GSC and tool zips live in the assembly, not as loose publish files. -->
     <IncludeAllContentForSelfExtract>false</IncludeAllContentForSelfExtract>
     <DefineConstants Condition="'$(PublishSingleFile)' == 'true'">$(DefineConstants);SINGLE_FILE_PUBLISH</DefineConstants>
   </PropertyGroup>
-
-  <ItemGroup>
-    <PackageReference Include="AsmJitter" Version="1.0.0" />
-  </ItemGroup>
 
   <ItemGroup>
     <None Remove="Gsc\**" />

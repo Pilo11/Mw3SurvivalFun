@@ -182,41 +182,6 @@ namespace FunExecuter
             BitConverter.GetBytes(value).CopyTo(Payload, offset);
         }
 
-        internal int ReplaceExactCString(string from, string to)
-        {
-            if (string.IsNullOrEmpty(from) || to.Length > from.Length)
-                return 0;
-
-            var needle = Encoding.ASCII.GetBytes(from);
-            var replacement = Encoding.ASCII.GetBytes(to);
-            var count = 0;
-            var payload = Payload;
-            var i = 0;
-            while (i + needle.Length < payload.Length)
-            {
-                var at = payload.AsSpan(i).IndexOf(needle);
-                if (at < 0)
-                    break;
-
-                var abs = i + at;
-                var beforeOk = abs == 0 || payload[abs - 1] == 0;
-                var after = abs + needle.Length;
-                var afterOk = after < payload.Length && payload[after] == 0;
-                if (beforeOk && afterOk)
-                {
-                    Array.Clear(payload, abs, needle.Length);
-                    Buffer.BlockCopy(replacement, 0, payload, abs, replacement.Length);
-                    count++;
-                    i = after + 1;
-                    continue;
-                }
-
-                i = abs + 1;
-            }
-
-            return count;
-        }
-
         private static Iw5FastFile LoadUnsigned(byte[] file)
         {
             const int prefixLength = 21;

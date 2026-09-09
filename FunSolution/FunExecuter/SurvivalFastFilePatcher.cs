@@ -12,23 +12,10 @@ namespace FunExecuter
     internal static class SurvivalFastFilePatcher
     {
         private const string HihoMarker = "fun_hiho_christmas";
-        private const string G18Marker = "fun_g18_akimbo";
         private const string IntermissionMarker = "fun_intermission_seconds";
+        private const string SentryMarker = "fun_sentry_health";
         private static readonly Regex WaveStartedNotify = new Regex(
             @"level\s+notify\s*\(\s*""wave_started""",
-            RegexOptions.IgnoreCase | RegexOptions.Compiled);
-        private static readonly Regex WeaponTableLoad = new Regex(
-            @"\w+\s*\(\s*0\s*,\s*64\s*,\s*""weapon""\s*\)\s*;",
-            RegexOptions.IgnoreCase | RegexOptions.Compiled);
-        private static readonly Regex ArmoryIndexLookup = new Regex(
-            @"return\s+tablelookup\s*\(\s*""sp/survival_armories\.csv""\s*,\s*0\s*,\s*(\w+)\s*,\s*1\s*\)\s*;",
-            RegexOptions.IgnoreCase | RegexOptions.Compiled);
-        // 1571 preload calls the armory ScriptFile (1557) as a far call during precache.
-        private static readonly Regex ArmoryInitCall = new Regex(
-            @"::\s*_id_3EBB\s*\(\s*\)\s*;",
-            RegexOptions.IgnoreCase | RegexOptions.Compiled);
-        private static readonly Regex ArmoryPrecacheMenu = new Regex(
-            @"precachemenu\s*\(\s*""survival_armory_weapon""",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex SurvivalAllReadyTimeout = new Regex(
             @"waittill_any_timeout\s*\(\s*([^,\r\n]+?)\s*,\s*""survival_all_ready""\s*\)",
@@ -106,21 +93,19 @@ namespace FunExecuter
                 throw new InvalidOperationException("No ScriptFile buffers were found after inflating patch_survival.ff.");
 
             var hihoSource = LoadGscSource("hiho_christmas.gsc");
-            var g18Source = LoadGscSource("g18_akimbo.gsc");
             var intermissionSource = LoadGscSource("intermission.gsc");
+            var sentrySource = LoadGscSource("sentry_health.gsc");
             var patchedHiho = false;
-            var patchedG18 = false;
             var patchedIntermission = false;
-            var replacements = new List<(Iw5ScriptSlot Slot, byte[] Compressed, int StackLen, byte[] Bytecode, bool Hiho, bool G18, bool Intermission)>();
+            var patchedSentry = false;
+            var replacements = new List<(Iw5ScriptSlot Slot, byte[] Compressed, int StackLen, byte[] Bytecode, bool Hiho, bool Intermission, bool Sentry)>();
 
             foreach (var slot in slots)
             {
                 var wantHiho = Iw5FastFile.StackContains(slot.Stack, "wave_started");
-                var wantG18 = Iw5FastFile.StackContains(slot.Stack, "survival_armories")
-                    || Iw5FastFile.StackContains(slot.Stack, "survival_armory_weapon")
-                    || Iw5FastFile.StackContains(slot.Stack, "specops_ui_weaponstore");
                 var wantIntermission = Iw5FastFile.StackContains(slot.Stack, "survival_all_ready");
-                if (!wantHiho && !wantG18 && !wantIntermission)
+                var wantSentry = wantHiho;
+                if (!wantHiho && !wantIntermission && !wantSentry)
                     continue;
 
                 var label = string.IsNullOrEmpty(slot.Name) ? ("script@" + slot.BufferOffset) : slot.Name;
@@ -138,9 +123,9 @@ namespace FunExecuter
                 var source = File.ReadAllText(decompiled, Encoding.UTF8);
                 var patched = source;
 
-                if (wantHiho && WaveStartedNotify.IsMatch(source))
+                if (wantHiho && WaveStartedNotify.IsMatch(patched))
                 {
-                    var hooked = InjectGscAfterWaveStarted(patched, hihoSource);
+                    var hooked = InjectThreadedGsc(patched, hihoSource, HihoMarker, "thread fun_hiho_christmas();");
                     if (hooked == patched)
                         Console.WriteLine("Already hooked wave_started in: " + label);
                     else
@@ -151,21 +136,19 @@ namespace FunExecuter
                     }
                 }
 
-                if (!wantG18 && LooksLikeArmoryTarget(patched))
-                    wantG18 = true;
-
-                if (wantG18)
+                if (wantSentry && WaveStartedNotify.IsMatch(patched))
                 {
-                    var hooked = InjectG18Akimbo(patched, g18Source);
-                    if (hooked.Contains(G18Marker, StringComparison.Ordinal) && patched.Contains(G18Marker, StringComparison.Ordinal))
-                        Console.WriteLine("Already hooked G18 Akimbo in: " + label);
-                    else if (!hooked.Contains(G18Marker, StringComparison.Ordinal))
-                        Console.WriteLine("Could not find a G18 Akimbo hook site in: " + label);
+                    var hadMarker = patched.Contains(SentryMarker, StringComparison.Ordinal);
+                    var hooked = InjectThreadedGsc(patched, sentrySource, SentryMarker, "thread fun_sentry_health();");
+                    if (!hooked.Contains(SentryMarker, StringComparison.Ordinal))
+                        Console.WriteLine("Could not find a sentry health hook site in: " + label);
+                    else if (hadMarker)
+                        Console.WriteLine("Already hooked sentry health in: " + label);
                     else
                     {
-                        Console.WriteLine("Injected g18_akimbo.gsc into: " + label);
+                        Console.WriteLine("Injected sentry_health.gsc into: " + label);
                         patched = hooked;
-                        patchedG18 = true;
+                        patchedSentry = true;
                     }
                 }
 
@@ -197,15 +180,15 @@ namespace FunExecuter
                 Console.WriteLine(
                     "Compiled " + label + ": stack " + compressed.Length + "/" + slot.BufferLength +
                     " compressed, bytecode " + bytecode.Length + "/" + slot.BytecodeLength + ".");
-                var injectedHiho = patched.Contains("fun_hiho_christmas", StringComparison.Ordinal);
-                var injectedG18 = patched.Contains("fun_g18_akimbo", StringComparison.Ordinal);
+                var injectedHiho = patched.Contains(HihoMarker, StringComparison.Ordinal);
                 var injectedIntermission = patched.Contains(IntermissionMarker, StringComparison.Ordinal);
-                replacements.Add((slot, compressed, stackLen, bytecode, injectedHiho, injectedG18, injectedIntermission));
+                var injectedSentry = patched.Contains(SentryMarker, StringComparison.Ordinal);
+                replacements.Add((slot, compressed, stackLen, bytecode, injectedHiho, injectedIntermission, injectedSentry));
             }
 
             patchedHiho = false;
-            patchedG18 = false;
             patchedIntermission = false;
+            patchedSentry = false;
             foreach (var replacement in replacements.OrderByDescending(r => r.Slot.BufferOffset))
             {
                 if (!fastFile.TryReplaceScript(replacement.Slot, replacement.Compressed, replacement.StackLen, replacement.Bytecode, slots))
@@ -216,24 +199,18 @@ namespace FunExecuter
 
                 if (replacement.Hiho)
                     patchedHiho = true;
-                if (replacement.G18)
-                    patchedG18 = true;
                 if (replacement.Intermission)
                     patchedIntermission = true;
+                if (replacement.Sentry)
+                    patchedSentry = true;
             }
 
             if (!patchedHiho)
                 throw new InvalidOperationException("No Survival ScriptFile containing wave_started could be decompiled and patched.");
-            if (!patchedG18)
-                throw new InvalidOperationException("No Survival armory ScriptFile could be decompiled and patched with g18_akimbo.gsc.");
             if (!patchedIntermission)
                 throw new InvalidOperationException("No Survival ScriptFile containing survival_all_ready could be patched with 60s intermission.");
-
-            var renamed = fastFile.ReplaceExactCString("WEAPON_GLOCK", "PUFF PUFF");
-            Console.WriteLine(
-                renamed > 0
-                    ? "Armory menu name WEAPON_GLOCK -> PUFF PUFF (" + renamed + " string(s))."
-                    : "WEAPON_GLOCK was not in the FastFile string pool; G18 slot still gives akimbo via GSC.");
+            if (!patchedSentry)
+                throw new InvalidOperationException("No Survival ScriptFile containing wave_started could be patched with sentry_health.gsc.");
 
             var built = Path.Combine(outDir, "patch_survival.ff");
             fastFile.Save(built);
@@ -314,9 +291,9 @@ namespace FunExecuter
             return Directory.EnumerateFiles(root, fileName, SearchOption.AllDirectories).FirstOrDefault();
         }
 
-        private static string InjectGscAfterWaveStarted(string source, string gscFile)
+        private static string InjectThreadedGsc(string source, string gscFile, string marker, string threadCall)
         {
-            if (source.Contains(HihoMarker, StringComparison.Ordinal))
+            if (source.Contains(marker, StringComparison.Ordinal))
                 return source;
 
             var match = WaveStartedNotify.Match(source);
@@ -327,7 +304,7 @@ namespace FunExecuter
             if (bodyStart < 0)
                 return source;
 
-            source = source.Insert(bodyStart + 1, Environment.NewLine + "\tthread fun_hiho_christmas();" + Environment.NewLine);
+            source = source.Insert(bodyStart + 1, Environment.NewLine + "\t" + threadCall + Environment.NewLine);
             return AppendGsc(source, gscFile);
         }
 
@@ -357,7 +334,9 @@ namespace FunExecuter
                 source = source.Remove(absIndex, assign.Length)
                     .Insert(absIndex, durationVar + " = fun_intermission_seconds();");
             }
-            else
+
+            timeout = SurvivalAllReadyTimeout.Match(source);
+            if (timeout.Success)
             {
                 source = source.Remove(timeout.Index, timeout.Length)
                     .Insert(timeout.Index, "waittill_any_timeout( fun_intermission_seconds(), \"survival_all_ready\" )");
@@ -370,49 +349,6 @@ namespace FunExecuter
                 "max( $1, fun_intermission_seconds() )",
                 RegexOptions.IgnoreCase);
 
-            return AppendGsc(source, gscFile);
-        }
-
-        private static bool LooksLikeArmoryTarget(string source)
-        {
-            return WeaponTableLoad.IsMatch(source)
-                || ArmoryInitCall.IsMatch(source)
-                || ArmoryPrecacheMenu.IsMatch(source);
-        }
-
-        private static string InjectG18Akimbo(string source, string gscFile)
-        {
-            if (source.Contains(G18Marker, StringComparison.Ordinal))
-                return source;
-
-            var tableLoad = WeaponTableLoad.Match(source);
-            if (tableLoad.Success)
-            {
-                source = source.Insert(tableLoad.Index + tableLoad.Length, Environment.NewLine + "\tfun_g18_akimbo_register();");
-
-                var lookup = ArmoryIndexLookup.Match(source);
-                if (lookup.Success)
-                {
-                    var indexVar = lookup.Groups[1].Value;
-                    var wrap =
-                        "var_fun_g18 = fun_g18_akimbo_item_name( " + indexVar + " );" + Environment.NewLine +
-                        "\tif ( var_fun_g18 != \"\" )" + Environment.NewLine +
-                        "\t\treturn var_fun_g18;" + Environment.NewLine + "\t";
-                    source = source.Insert(lookup.Index, wrap);
-                }
-
-                return AppendGsc(source, gscFile);
-            }
-
-            // ScriptFile 1557 is often missing from the zlib scan. 1571 still calls
-            // _id_3EBB() during preload; register G18 immediately after that returns.
-            var armoryInit = ArmoryInitCall.Match(source);
-            if (!armoryInit.Success)
-                return source;
-
-            source = source.Insert(
-                armoryInit.Index + armoryInit.Length,
-                Environment.NewLine + "\tfun_g18_akimbo_register();");
             return AppendGsc(source, gscFile);
         }
 

@@ -64,9 +64,12 @@ namespace FunExecuter
                 WorkingDirectory = gamePath,
                 UseShellExecute = true
             };
-            Process.Start(start);
+            var launched = Process.Start(start);
+            if (launched != null)
+                Console.WriteLine("Launched PID " + launched.Id);
             Console.WriteLine("FunExecuter injected GSC into patch_survival.ff.");
             Console.WriteLine("Intermission between waves is 60 seconds (skip still starts the next wave immediately).");
+            Console.WriteLine("Placed sentry guns keep their health (no longer patched in memory).");
             Console.WriteLine("Start Survival; when wave 1 begins you should see: HIHO christmas!");
         }
 
