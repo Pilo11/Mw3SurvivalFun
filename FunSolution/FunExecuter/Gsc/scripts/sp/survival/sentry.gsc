@@ -1,5 +1,6 @@
-// FunExecuter Survival GSC: sentry health, $500 minigun price, cap of 4.
+// FunExecuter Survival GSC: sentry health, vanilla $3000 minigun price, cap of 4.
 // Team cap is fun_sentry_max(). In co-op each player is limited to fun_sentry_player_max().
+// A player may only buy another sentry after the current one has been placed.
 // Armory tables live in a different ScriptFile, so price/cap are applied at runtime.
 
 fun_sentry_max()
@@ -14,7 +15,7 @@ fun_sentry_player_max()
 
 fun_sentry_price()
 {
-	return 500;
+	return 3000;
 }
 
 fun_sentry_is_coop()
@@ -33,6 +34,20 @@ fun_sentry_slot_free()
 		return 0;
 
 	return 1;
+}
+
+fun_sentry_holding()
+{
+	if ( isdefined( self.fun_sentry_pending ) && self.fun_sentry_pending )
+		return 1;
+
+	if ( _id_0611::_id_3CF4( "sentry" ) )
+		return 1;
+
+	if ( _id_0611::_id_3CF4( "sentry_gl" ) )
+		return 1;
+
+	return 0;
 }
 
 fun_sentry_player_owned()
@@ -75,6 +90,9 @@ fun_sentry_owned_total()
 
 fun_sentry_allow( item )
 {
+	if ( fun_sentry_holding() )
+		return 0;
+
 	if ( !fun_sentry_slot_free() )
 		return 0;
 
@@ -87,6 +105,14 @@ fun_sentry_allow( item )
 	return 1;
 }
 
+fun_sentry_give( item )
+{
+	self.fun_sentry_pending = 1;
+
+	if ( isdefined( level.fun_sentry_give ) )
+		self [[ level.fun_sentry_give ]]( item );
+}
+
 fun_sentry_setup_armory()
 {
 	if ( !isdefined( level._id_189A ) )
@@ -96,10 +122,22 @@ fun_sentry_setup_armory()
 	{
 		level._id_189A["sentry"]._id_3EC1 = fun_sentry_price();
 		level._id_189A["sentry"]._id_3EC3 = ::fun_sentry_allow;
+
+		if ( !isdefined( level.fun_sentry_give ) && isdefined( level._id_189A["sentry"]._id_3EC4 ) )
+			level.fun_sentry_give = level._id_189A["sentry"]._id_3EC4;
+
+		level._id_189A["sentry"]._id_3EC4 = ::fun_sentry_give;
 	}
 
 	if ( isdefined( level._id_189A["sentry_gl"] ) )
+	{
 		level._id_189A["sentry_gl"]._id_3EC3 = ::fun_sentry_allow;
+
+		if ( !isdefined( level.fun_sentry_give ) && isdefined( level._id_189A["sentry_gl"]._id_3EC4 ) )
+			level.fun_sentry_give = level._id_189A["sentry_gl"]._id_3EC4;
+
+		level._id_189A["sentry_gl"]._id_3EC4 = ::fun_sentry_give;
+	}
 
 	return isdefined( level._id_189A["sentry"] );
 }
@@ -142,22 +180,30 @@ fun_sentry_setup_armory_loop()
 	for ( ;; )
 	{
 		fun_sentry_setup_armory();
-		wait 0.25;
+		wait 0.05;
 	}
 }
 
 fun_sentry_player()
 {
-	self endon( "death" );
+	self endon( "disconnect" );
 	level endon( "special_op_terminated" );
+	self thread fun_sentry_clear_pending_on_death();
 
 	for ( ;; )
 	{
 		self waittill( "new_sentry", sentry );
+		self.fun_sentry_pending = 0;
 
 		if ( isdefined( sentry ) )
 			sentry thread fun_sentry_keep();
 	}
+}
+
+fun_sentry_clear_pending_on_death()
+{
+	self waittill( "death" );
+	self.fun_sentry_pending = 0;
 }
 
 fun_sentry_keep()

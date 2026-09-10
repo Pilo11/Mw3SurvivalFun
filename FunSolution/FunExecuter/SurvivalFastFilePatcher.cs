@@ -500,6 +500,12 @@ namespace FunExecuter
             return
                 "_id_3F13( var_0 )" + Environment.NewLine +
                 "{" + Environment.NewLine +
+                "\tif ( isdefined( self.fun_sentry_pending ) && self.fun_sentry_pending )" + Environment.NewLine +
+                "\t\treturn 0;" + Environment.NewLine +
+                Environment.NewLine +
+                "\tif ( _id_0611::_id_3CF4( \"sentry\" ) || _id_0611::_id_3CF4( \"sentry_gl\" ) )" + Environment.NewLine +
+                "\t\treturn 0;" + Environment.NewLine +
+                Environment.NewLine +
                 "\tif ( !_id_3EE9() )" + Environment.NewLine +
                 "\t\treturn 0;" + Environment.NewLine +
                 Environment.NewLine +
