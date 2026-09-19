@@ -11,10 +11,10 @@ namespace FunExecuter
 {
     internal static class SurvivalFastFilePatcher
     {
-        private const string HihoMarker = "fun_hiho_christmas";
         private const string IntermissionMarker = "fun_intermission_seconds";
         private const string SentryMarker = "fun_sentry";
         private const string PlayerMarker = "fun_player";
+        private const string TeleportFlagsMarker = "fun_teleport_flags";
         private static readonly Regex WaveStartedNotify = new Regex(
             @"level\s+notify\s*\(\s*""wave_started""",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -181,34 +181,35 @@ namespace FunExecuter
             if (slots.Count == 0)
                 throw new InvalidOperationException("No ScriptFile buffers were found after inflating patch_survival.ff.");
 
-            var hihoSource = LoadGscSource("hiho_christmas.gsc");
             var intermissionSource = LoadGscSource("intermission.gsc");
             var sentrySource = LoadGscSource("sentry.gsc");
             var playerSource = LoadGscSource("player.gsc");
+            var teleportFlagsSource = LoadGscSource("teleport-flags.gsc");
             var sentryMax = ReadSentryInt(sentrySource, SentryMaxReturn, "fun_sentry_max()");
             var sentryPlayerMax = ReadSentryInt(sentrySource, SentryPlayerMaxReturn, "fun_sentry_player_max()");
             var sentryPrice = ReadSentryInt(sentrySource, SentryPriceReturn, "fun_sentry_price()");
             var armorHealth = ReadSentryInt(playerSource, PlayerArmorHealthReturn, "fun_player_armor_health()");
-            var patchedHiho = false;
             var patchedIntermission = false;
             var patchedSentry = false;
             var patchedSentryLimit = false;
             var patchedSentryPrice = false;
             var patchedPlayer = false;
-            var replacements = new List<(Iw5ScriptSlot Slot, byte[] Compressed, int StackLen, byte[] Bytecode, bool Hiho, bool Intermission, bool Sentry, bool SentryLimit, bool SentryPrice, bool Player)>();
+            var patchedFlags = false;
+            var replacements = new List<(Iw5ScriptSlot Slot, byte[] Compressed, int StackLen, byte[] Bytecode, bool Intermission, bool Sentry, bool SentryLimit, bool SentryPrice, bool Player, bool Flags)>();
 
             foreach (var slot in slots)
             {
-                var wantHiho = Iw5FastFile.StackContains(slot.Stack, "wave_started");
+                var wantWave = Iw5FastFile.StackContains(slot.Stack, "wave_started");
                 var wantIntermission = Iw5FastFile.StackContains(slot.Stack, "survival_all_ready");
-                var wantSentry = wantHiho;
-                var wantPlayer = wantHiho;
+                var wantSentry = wantWave;
+                var wantPlayer = wantWave;
+                var wantFlags = wantWave;
                 var wantSentryLimit = Iw5FastFile.StackContains(slot.Stack, "sentry_gl")
                     || Iw5FastFile.StackContains(slot.Stack, "specops_ui_weaponstore")
                     || Iw5FastFile.StackContains(slot.Stack, "specops_ui_equipmentstore")
                     || Iw5FastFile.StackContains(slot.Stack, "survival_armories")
                     || Iw5FastFile.StackContains(slot.Stack, "SO_SURVIVAL_ARMORY");
-                if (!wantHiho && !wantIntermission && !wantSentry && !wantSentryLimit && !wantPlayer)
+                if (!wantWave && !wantIntermission && !wantSentry && !wantSentryLimit && !wantPlayer && !wantFlags)
                     continue;
 
                 var label = string.IsNullOrEmpty(slot.Name) ? ("script@" + slot.BufferOffset) : slot.Name;
@@ -227,19 +228,6 @@ namespace FunExecuter
                 var patched = source;
                 var limitPatchedThisSlot = false;
                 var pricePatchedThisSlot = false;
-
-                if (wantHiho && WaveStartedNotify.IsMatch(patched))
-                {
-                    var hooked = InjectThreadedGsc(patched, hihoSource, HihoMarker, "thread fun_hiho_christmas();");
-                    if (hooked == patched)
-                        Console.WriteLine("Already hooked wave_started in: " + label);
-                    else
-                    {
-                        Console.WriteLine("Injected hiho_christmas.gsc into: " + label);
-                        patched = hooked;
-                        patchedHiho = true;
-                    }
-                }
 
                 if (wantSentry && WaveStartedNotify.IsMatch(patched))
                 {
@@ -270,6 +258,22 @@ namespace FunExecuter
                         Console.WriteLine("Injected player.gsc into: " + label);
                         patched = hooked;
                         patchedPlayer = true;
+                    }
+                }
+
+                if (wantFlags && WaveStartedNotify.IsMatch(patched))
+                {
+                    var hadMarker = patched.Contains(TeleportFlagsMarker, StringComparison.Ordinal);
+                    var hooked = InjectThreadedGsc(patched, teleportFlagsSource, TeleportFlagsMarker, "thread fun_teleport_flags();");
+                    if (!hooked.Contains(TeleportFlagsMarker, StringComparison.Ordinal))
+                        Console.WriteLine("Could not find a teleport-flags hook site in: " + label);
+                    else if (hadMarker)
+                        Console.WriteLine("Already hooked teleport-flags in: " + label);
+                    else
+                    {
+                        Console.WriteLine("Injected teleport-flags.gsc into: " + label);
+                        patched = hooked;
+                        patchedFlags = true;
                     }
                 }
 
@@ -332,19 +336,19 @@ namespace FunExecuter
                 Console.WriteLine(
                     "Compiled " + label + ": stack " + compressed.Length + "/" + slot.BufferLength +
                     " compressed, bytecode " + bytecode.Length + "/" + slot.BytecodeLength + ".");
-                var injectedHiho = patched.Contains(HihoMarker, StringComparison.Ordinal);
                 var injectedIntermission = patched.Contains(IntermissionMarker, StringComparison.Ordinal);
                 var injectedSentry = patched.Contains(SentryMarker, StringComparison.Ordinal);
                 var injectedPlayer = patched.Contains(PlayerMarker, StringComparison.Ordinal);
-                replacements.Add((slot, compressed, stackLen, bytecode, injectedHiho, injectedIntermission, injectedSentry, limitPatchedThisSlot, pricePatchedThisSlot, injectedPlayer));
+                var injectedFlags = patched.Contains(TeleportFlagsMarker, StringComparison.Ordinal);
+                replacements.Add((slot, compressed, stackLen, bytecode, injectedIntermission, injectedSentry, limitPatchedThisSlot, pricePatchedThisSlot, injectedPlayer, injectedFlags));
             }
 
-            patchedHiho = false;
             patchedIntermission = false;
             patchedSentry = false;
             patchedSentryLimit = false;
             patchedSentryPrice = false;
             patchedPlayer = false;
+            patchedFlags = false;
             foreach (var replacement in replacements.OrderByDescending(r => r.Slot.BufferOffset))
             {
                 if (!fastFile.TryReplaceScript(replacement.Slot, replacement.Compressed, replacement.StackLen, replacement.Bytecode, slots))
@@ -353,8 +357,6 @@ namespace FunExecuter
                     continue;
                 }
 
-                if (replacement.Hiho)
-                    patchedHiho = true;
                 if (replacement.Intermission)
                     patchedIntermission = true;
                 if (replacement.Sentry)
@@ -365,16 +367,18 @@ namespace FunExecuter
                     patchedSentryPrice = true;
                 if (replacement.Player)
                     patchedPlayer = true;
+                if (replacement.Flags)
+                    patchedFlags = true;
             }
 
-            if (!patchedHiho)
-                throw new InvalidOperationException("No Survival ScriptFile containing wave_started could be decompiled and patched.");
             if (!patchedIntermission)
                 throw new InvalidOperationException("No Survival ScriptFile containing survival_all_ready could be patched with 60s intermission.");
             if (!patchedSentry)
                 throw new InvalidOperationException("No Survival ScriptFile containing wave_started could be patched with sentry.gsc.");
             if (!patchedPlayer)
                 throw new InvalidOperationException("No Survival ScriptFile containing wave_started could be patched with player.gsc.");
+            if (!patchedFlags)
+                throw new InvalidOperationException("No Survival ScriptFile containing wave_started could be patched with teleport-flags.gsc.");
             if (patchedSentryLimit)
                 Console.WriteLine("Also patched a Survival armory ScriptFile sentry cap to " + sentryMax + ".");
             else

@@ -72,7 +72,8 @@ namespace FunExecuter
             Console.WriteLine("Sentry minigun costs $3000, keeps its health, and up to 4 can be owned (2 per player in co-op). Buy another only after the current one is placed.");
             Console.WriteLine("Body armor soaks 1000 damage and can be bought again while remaining armor is still above 250.");
             Console.WriteLine("Each player can buy up to 4 riot shield squads.");
-            Console.WriteLine("Start Survival; when wave 1 begins you should see: HIHO christmas!");
+            Console.WriteLine("On Terminal, a flag on the plane roof and a flag behind the body scanners teleport to each other.");
+            Console.WriteLine("Start Survival; when wave 1 begins you should see: Pilo's crazy survival fun");
         }
 
         private static string ResolveGamePath(string[] args)

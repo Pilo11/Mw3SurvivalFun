@@ -21,6 +21,7 @@ fun_player()
 	level.fun_player = 1;
 	level endon( "special_op_terminated" );
 	thread fun_player_setup_armory_loop();
+	thread fun_player_wave1();
 
 	for ( ;; )
 	{
@@ -33,11 +34,75 @@ fun_player()
 					player.fun_player = 1;
 					player thread fun_player_armor();
 					player thread fun_player_riot_player();
+					player thread fun_player_coords();
 				}
 			}
 		}
 
 		wait 0.25;
+	}
+}
+
+fun_player_wave1()
+{
+	level endon( "special_op_terminated" );
+
+	for ( ;; )
+	{
+		level waittill( "wave_started", wave );
+
+		if ( isdefined( wave ) && wave != 1 )
+			continue;
+
+		iprintlnbold( "Pilo's crazy survival fun" );
+		return;
+	}
+}
+
+fun_player_coord_elem( x, y )
+{
+	hud = newclienthudelem( self );
+	hud.alignx = "left";
+	hud.aligny = "bottom";
+	hud.horzalign = "left";
+	hud.vertalign = "bottom";
+	hud.x = x;
+	hud.y = y;
+	hud.font = "hudbig";
+	hud.fontscale = 0.45;
+	hud.color = ( 1, 0.95, 0.7 );
+	hud.alpha = 0.9;
+	hud.foreground = 1;
+	hud.hidewheninmenu = 1;
+	hud.archived = 0;
+	hud.sort = 20;
+	return hud;
+}
+
+fun_player_coords()
+{
+	self endon( "disconnect" );
+	level endon( "special_op_terminated" );
+	lx = fun_player_coord_elem( 8, -16 );
+	lx settext( "X:" );
+	vx = fun_player_coord_elem( 28, -16 );
+	ly = fun_player_coord_elem( 130, -16 );
+	ly settext( "Y:" );
+	vy = fun_player_coord_elem( 150, -16 );
+	lz = fun_player_coord_elem( 252, -16 );
+	lz settext( "Z:" );
+	vz = fun_player_coord_elem( 272, -16 );
+
+	for ( ;; )
+	{
+		if ( !isdefined( self ) )
+			return;
+
+		origin = self.origin;
+		vx setvalue( int( origin[0] * 10000 ) * 0.0001 );
+		vy setvalue( int( origin[1] * 10000 ) * 0.0001 );
+		vz setvalue( int( origin[2] * 10000 ) * 0.0001 );
+		wait 0.05;
 	}
 }
 
