@@ -69,10 +69,9 @@ namespace FunExecuter
                 Console.WriteLine("Launched PID " + launched.Id);
             Console.WriteLine("FunExecuter injected GSC into patch_survival.ff.");
             Console.WriteLine("Intermission between waves is 60 seconds (skip still starts the next wave immediately).");
-            Console.WriteLine("Sentry minigun costs $3000, keeps its health, and up to 4 can be owned (2 per player in co-op). Buy another only after the current one is placed.");
+            Console.WriteLine("Sentry minigun costs $3000, keeps its health, and up to 4 can be owned per player (8 team cap). Buy another only after the current one is placed.");
             Console.WriteLine("Body armor soaks 1000 damage and can be bought again while remaining armor is still above 250.");
-            Console.WriteLine("Each player can buy up to 4 riot shield squads.");
-            Console.WriteLine("On Terminal, a flag on the plane roof and a flag behind the body scanners teleport to each other.");
+            Console.WriteLine("Each player can buy up to 2 riot shield squads.");
             Console.WriteLine("Start Survival; when wave 1 begins you should see: Pilo's crazy survival fun");
         }
 
@@ -84,7 +83,11 @@ namespace FunExecuter
             if (Directory.Exists(Constants.MW3_BASE_PATH))
                 return Constants.MW3_BASE_PATH;
 
-            throw new DirectoryNotFoundException("MW3 path not found: " + Constants.MW3_BASE_PATH);
+            if (Directory.Exists(Constants.MW3_BASE_PATH_SECONDARY))
+                return Constants.MW3_BASE_PATH_SECONDARY;
+
+            throw new DirectoryNotFoundException(
+                "MW3 path not found: " + Constants.MW3_BASE_PATH + " or " + Constants.MW3_BASE_PATH_SECONDARY);
         }
 
         private static List<IwdEntry> LoadGscEntries()

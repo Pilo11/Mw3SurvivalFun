@@ -10,7 +10,7 @@ fun_player_armor_health()
 
 fun_player_riot_max()
 {
-	return 4;
+	return 2;
 }
 
 fun_player()

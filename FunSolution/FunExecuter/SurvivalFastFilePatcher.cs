@@ -14,7 +14,6 @@ namespace FunExecuter
         private const string IntermissionMarker = "fun_intermission_seconds";
         private const string SentryMarker = "fun_sentry";
         private const string PlayerMarker = "fun_player";
-        private const string TeleportFlagsMarker = "fun_teleport_flags";
         private static readonly Regex WaveStartedNotify = new Regex(
             @"level\s+notify\s*\(\s*""wave_started""",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -184,7 +183,6 @@ namespace FunExecuter
             var intermissionSource = LoadGscSource("intermission.gsc");
             var sentrySource = LoadGscSource("sentry.gsc");
             var playerSource = LoadGscSource("player.gsc");
-            var teleportFlagsSource = LoadGscSource("teleport-flags.gsc");
             var sentryMax = ReadSentryInt(sentrySource, SentryMaxReturn, "fun_sentry_max()");
             var sentryPlayerMax = ReadSentryInt(sentrySource, SentryPlayerMaxReturn, "fun_sentry_player_max()");
             var sentryPrice = ReadSentryInt(sentrySource, SentryPriceReturn, "fun_sentry_price()");
@@ -194,8 +192,7 @@ namespace FunExecuter
             var patchedSentryLimit = false;
             var patchedSentryPrice = false;
             var patchedPlayer = false;
-            var patchedFlags = false;
-            var replacements = new List<(Iw5ScriptSlot Slot, byte[] Compressed, int StackLen, byte[] Bytecode, bool Intermission, bool Sentry, bool SentryLimit, bool SentryPrice, bool Player, bool Flags)>();
+            var replacements = new List<(Iw5ScriptSlot Slot, byte[] Compressed, int StackLen, byte[] Bytecode, bool Intermission, bool Sentry, bool SentryLimit, bool SentryPrice, bool Player)>();
 
             foreach (var slot in slots)
             {
@@ -203,13 +200,12 @@ namespace FunExecuter
                 var wantIntermission = Iw5FastFile.StackContains(slot.Stack, "survival_all_ready");
                 var wantSentry = wantWave;
                 var wantPlayer = wantWave;
-                var wantFlags = wantWave;
                 var wantSentryLimit = Iw5FastFile.StackContains(slot.Stack, "sentry_gl")
                     || Iw5FastFile.StackContains(slot.Stack, "specops_ui_weaponstore")
                     || Iw5FastFile.StackContains(slot.Stack, "specops_ui_equipmentstore")
                     || Iw5FastFile.StackContains(slot.Stack, "survival_armories")
                     || Iw5FastFile.StackContains(slot.Stack, "SO_SURVIVAL_ARMORY");
-                if (!wantWave && !wantIntermission && !wantSentry && !wantSentryLimit && !wantPlayer && !wantFlags)
+                if (!wantWave && !wantIntermission && !wantSentry && !wantSentryLimit && !wantPlayer)
                     continue;
 
                 var label = string.IsNullOrEmpty(slot.Name) ? ("script@" + slot.BufferOffset) : slot.Name;
@@ -258,22 +254,6 @@ namespace FunExecuter
                         Console.WriteLine("Injected player.gsc into: " + label);
                         patched = hooked;
                         patchedPlayer = true;
-                    }
-                }
-
-                if (wantFlags && WaveStartedNotify.IsMatch(patched))
-                {
-                    var hadMarker = patched.Contains(TeleportFlagsMarker, StringComparison.Ordinal);
-                    var hooked = InjectThreadedGsc(patched, teleportFlagsSource, TeleportFlagsMarker, "thread fun_teleport_flags();");
-                    if (!hooked.Contains(TeleportFlagsMarker, StringComparison.Ordinal))
-                        Console.WriteLine("Could not find a teleport-flags hook site in: " + label);
-                    else if (hadMarker)
-                        Console.WriteLine("Already hooked teleport-flags in: " + label);
-                    else
-                    {
-                        Console.WriteLine("Injected teleport-flags.gsc into: " + label);
-                        patched = hooked;
-                        patchedFlags = true;
                     }
                 }
 
@@ -339,8 +319,7 @@ namespace FunExecuter
                 var injectedIntermission = patched.Contains(IntermissionMarker, StringComparison.Ordinal);
                 var injectedSentry = patched.Contains(SentryMarker, StringComparison.Ordinal);
                 var injectedPlayer = patched.Contains(PlayerMarker, StringComparison.Ordinal);
-                var injectedFlags = patched.Contains(TeleportFlagsMarker, StringComparison.Ordinal);
-                replacements.Add((slot, compressed, stackLen, bytecode, injectedIntermission, injectedSentry, limitPatchedThisSlot, pricePatchedThisSlot, injectedPlayer, injectedFlags));
+                replacements.Add((slot, compressed, stackLen, bytecode, injectedIntermission, injectedSentry, limitPatchedThisSlot, pricePatchedThisSlot, injectedPlayer));
             }
 
             patchedIntermission = false;
@@ -348,7 +327,6 @@ namespace FunExecuter
             patchedSentryLimit = false;
             patchedSentryPrice = false;
             patchedPlayer = false;
-            patchedFlags = false;
             foreach (var replacement in replacements.OrderByDescending(r => r.Slot.BufferOffset))
             {
                 if (!fastFile.TryReplaceScript(replacement.Slot, replacement.Compressed, replacement.StackLen, replacement.Bytecode, slots))
@@ -367,8 +345,6 @@ namespace FunExecuter
                     patchedSentryPrice = true;
                 if (replacement.Player)
                     patchedPlayer = true;
-                if (replacement.Flags)
-                    patchedFlags = true;
             }
 
             if (!patchedIntermission)
@@ -377,8 +353,6 @@ namespace FunExecuter
                 throw new InvalidOperationException("No Survival ScriptFile containing wave_started could be patched with sentry.gsc.");
             if (!patchedPlayer)
                 throw new InvalidOperationException("No Survival ScriptFile containing wave_started could be patched with player.gsc.");
-            if (!patchedFlags)
-                throw new InvalidOperationException("No Survival ScriptFile containing wave_started could be patched with teleport-flags.gsc.");
             if (patchedSentryLimit)
                 Console.WriteLine("Also patched a Survival armory ScriptFile sentry cap to " + sentryMax + ".");
             else
@@ -516,7 +490,7 @@ namespace FunExecuter
                 "\tif ( _id_3EE5() >= " + sentryMax + " )" + Environment.NewLine +
                 "\t\treturn 0;" + Environment.NewLine +
                 Environment.NewLine +
-                "\tif ( maps\\_utility::_id_12C1() && fun_sentry_player_owned() >= " + playerMax + " )" + Environment.NewLine +
+                "\tif ( fun_sentry_player_owned() >= " + playerMax + " )" + Environment.NewLine +
                 "\t\treturn 0;" + Environment.NewLine +
                 Environment.NewLine +
                 "\treturn 1;" + Environment.NewLine +

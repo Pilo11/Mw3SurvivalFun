@@ -1,16 +1,16 @@
-// FunExecuter Survival GSC: sentry health, vanilla $3000 minigun price, cap of 4.
-// Team cap is fun_sentry_max(). In co-op each player is limited to fun_sentry_player_max().
+// FunExecuter Survival GSC: sentry health, vanilla $3000 minigun price.
+// Team cap is fun_sentry_max(). Each player is limited to fun_sentry_player_max().
 // A player may only buy another sentry after the current one has been placed.
 // Armory tables live in a different ScriptFile, so price/cap are applied at runtime.
 
 fun_sentry_max()
 {
-	return 4;
+	return 8;
 }
 
 fun_sentry_player_max()
 {
-	return 2;
+	return 4;
 }
 
 fun_sentry_price()
@@ -99,7 +99,7 @@ fun_sentry_allow( item )
 	if ( fun_sentry_owned_total() >= fun_sentry_max() )
 		return 0;
 
-	if ( fun_sentry_is_coop() && fun_sentry_player_owned() >= fun_sentry_player_max() )
+	if ( fun_sentry_player_owned() >= fun_sentry_player_max() )
 		return 0;
 
 	return 1;
